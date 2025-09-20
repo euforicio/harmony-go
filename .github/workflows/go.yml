@@ -1,0 +1,232 @@
+name: Go CI
+
+# Cancel older in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'profiles/**'
+      - '.gocache/**'
+      - '.gotmp/**'
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.25.1'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.0
+          install-mode: goinstall
+          args: --timeout 5m --out-format=colored-line-number
+
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    # Run tests in parallel with lint to reduce wall time
+    env:
+      TIKTOKEN_GO_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+      GOCACHE: ${{ github.workspace }}/.gocache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Prepare directories
+        run: |
+          mkdir -p profiles .tiktoken-cache .gocache
+      - name: Cache tokenizer data
+        uses: actions/cache@v4
+        with:
+          path: .tiktoken-cache
+          key: tiktoken-${{ hashFiles('go.mod', 'go.sum') }}
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: .gocache
+          key: ${{ runner.os }}-go${{ env.GO_VERSION }}-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go${{ env.GO_VERSION }}-build-
+      - name: Compute changed Go packages (PR)
+        if: github.event_name == 'pull_request'
+        id: changes
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.sha }}"
+          files=$(git diff --name-only "$base" "$head" | grep -E '\\.(go)$|(^|/)go\\.(mod|sum)$' || true)
+          if [ -z "$files" ]; then
+            echo "pkgs=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if echo "$files" | grep -Eq '(^|/)(go\\.(mod|sum))$'; then
+            pkgs=$(go list ./...)
+          else
+            dirs=$(echo "$files" | grep -E '\\.go$' | xargs -r -n1 dirname | sort -u)
+            if [ -z "$dirs" ]; then
+              echo "pkgs=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            pkgs=$(go list $(printf "./%s " $dirs) 2>/dev/null | sort -u || true)
+          fi
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Go vet
+        if: github.event_name != 'pull_request'
+        run: go vet ./...
+      - name: Go vet (changed packages)
+        if: github.event_name == 'pull_request'
+        run: |
+          pkgs="${{ steps.changes.outputs.pkgs }}"
+          if [ -z "$pkgs" ]; then
+            echo "No Go changes; skipping vet."
+            exit 0
+          fi
+          go vet $pkgs
+      - name: Run fast tests for PRs
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'full-ci')
+        run: |
+          pkgs="${{ steps.changes.outputs.pkgs }}"
+          if [ -z "$pkgs" ]; then
+            echo "No Go changes; skipping tests."
+            exit 0
+          fi
+          go test -short -v $pkgs
+      - name: Run full tests for PRs with label (race+coverage)
+        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')
+        run: |
+          pkgs="${{ steps.changes.outputs.pkgs }}"
+          if [ -z "$pkgs" ]; then
+            pkgs=$(go list ./...)
+          fi
+          go test -race -v $pkgs -coverprofile=profiles/coverage.out -covermode=atomic
+      - name: Upload coverage artifact (PR with label)
+        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: profiles/coverage.out
+          if-no-files-found: error
+      - name: Run full tests with race+coverage (main)
+        if: github.event_name != 'pull_request'
+        run: go test -race -v ./... -coverprofile=profiles/coverage.out -covermode=atomic
+      - name: Upload coverage artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: profiles/coverage.out
+          if-no-files-found: error
+
+  arenas:
+    name: Arenas Build
+    runs-on: ubuntu-latest
+    needs: test
+    # Skip this extra build on PRs; run on push/main or manual
+    if: github.event_name != 'pull_request'
+    env:
+      GOEXPERIMENT: arenas
+      TIKTOKEN_GO_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Prepare directories
+        run: |
+          mkdir -p .tiktoken-cache .gocache
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: .gocache
+          key: ${{ runner.os }}-go${{ env.GO_VERSION }}-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go${{ env.GO_VERSION }}-build-
+      - name: Cache tokenizer data
+        uses: actions/cache@v4
+        with:
+          path: .tiktoken-cache
+          key: tiktoken-${{ hashFiles('go.mod', 'go.sum') }}
+      - name: Build with arenas experiment
+        run: go build ./...
+      - name: Run basic arenas test (with timeout)
+        run: go test -timeout=2m ./tokenizer
+
+  benchmarks:
+    name: Benchmarks (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      TIKTOKEN_GO_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Prepare directories
+        run: |
+          mkdir -p .tiktoken-cache profiles .gocache
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: .gocache
+          key: ${{ runner.os }}-go${{ env.GO_VERSION }}-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go${{ env.GO_VERSION }}-build-
+      - name: Cache tokenizer data
+        uses: actions/cache@v4
+        with:
+          path: .tiktoken-cache
+          key: tiktoken-${{ hashFiles('go.mod', 'go.sum') }}
+      - name: Warm tokenizer cache
+        run: go test ./... -run '^TestStopTokens$' -count=1
+      - name: Build benchmark binaries
+        run: |
+          go test -c -o profiles/heap.test ./benchmarks/go
+          GOEXPERIMENT=arenas go test -c -o profiles/arena.test ./benchmarks/go
+      - name: Run heap benchmarks
+        run: |
+          TIKTOKEN_OFFLINE=1 ./profiles/heap.test -test.run=^$ -test.bench='^(BenchmarkRenderToolCall|BenchmarkRenderLargeAutoDrop|BenchmarkParseToolCall|BenchmarkStreamParseLargeCompletion)$' -test.benchmem -test.benchtime=200ms | tee profiles/bench-heap.txt
+      - name: Run arena benchmarks
+        run: |
+          GOEXPERIMENT=arenas TIKTOKEN_OFFLINE=1 ./profiles/arena.test -test.run=^$ -test.bench='^(BenchmarkRenderToolCall|BenchmarkRenderLargeAutoDrop|BenchmarkParseToolCall|BenchmarkStreamParseLargeCompletion)$' -test.benchmem -test.benchtime=200ms | tee profiles/bench-arenas.txt
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: |
+            profiles/bench-heap.txt
+            profiles/bench-arenas.txt
+          if-no-files-found: error

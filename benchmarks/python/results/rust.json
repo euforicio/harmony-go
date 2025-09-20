@@ -1,0 +1,38 @@
+[
+  {
+    "bench": "rs_render_tool_call",
+    "iters": 200,
+    "nanos_per_op": 405326.875,
+    "ops_per_sec": 2467.14457313002
+  },
+  {
+    "bench": "rs_render_large_keep_analysis",
+    "iters": 200,
+    "nanos_per_op": 20751843.750000004,
+    "ops_per_sec": 48.18848927580229
+  },
+  {
+    "bench": "rs_parse_tool_call",
+    "iters": 200,
+    "nanos_per_op": 405433.96,
+    "ops_per_sec": 2466.492940058598
+  },
+  {
+    "bench": "rs_stream_parse_tool_call",
+    "iters": 200,
+    "nanos_per_op": 401378.75,
+    "ops_per_sec": 2491.4124128394938
+  },
+  {
+    "bench": "rs_parse_large_completion",
+    "iters": 200,
+    "nanos_per_op": 405946.045,
+    "ops_per_sec": 2463.3815560390544
+  },
+  {
+    "bench": "rs_stream_parse_large_completion",
+    "iters": 200,
+    "nanos_per_op": 415824.165,
+    "ops_per_sec": 2404.8626418813346
+  }
+]

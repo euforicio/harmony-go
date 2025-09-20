@@ -1,0 +1,81 @@
+# Go build and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+bin/
+build/
+dist/
+
+# Go workspaces (local-only)
+go.work
+go.work.sum
+
+# Coverage reports
+coverage.out
+coverage/
+cover.out
+cov*.out
+profile*.out
+cpu.pprof
+mem.pprof
+heap.pprof
+block.pprof
+trace.out
+
+# Local caches and temp dirs
+.gocache/
+.gomodcache/
+.gopath/
+.gotmp/
+.tiktoken-cache/
+tmp/
+
+# Rust build artifacts
+target/
+**/target/
+**/*.rs.bk
+**/*.rlib
+**/*.rmeta
+
+# Profiles, benchmarks, and generated performance data
+profiles/
+benchmarks/go/profiles/
+
+# Logs and scratch
+*.log
+baseline_perf.txt
+post_fix_perf.txt
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# Editors and OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+.history/
+
+# Env files (keep examples)
+.env
+.env.*
+!.env.example
+
+# Python caches (for benchmark tooling)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.envrc

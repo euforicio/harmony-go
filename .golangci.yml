@@ -1,0 +1,31 @@
+run:
+  timeout: 3m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - govet
+    - revive
+    - errcheck
+    - ineffassign
+    - gofmt
+    - goimports
+    - staticcheck
+  disable:
+    - depguard
+
+linters-settings:
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+        arguments:
+          - "disableStutteringCheck"
+      - name: indent-error-flow
+      - name: redefines-builtin-id
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

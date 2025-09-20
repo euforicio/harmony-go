@@ -1,0 +1,13 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/euforicio/harmony-go/benchmarks/go
+cpu: Apple M2 Ultra
+BenchmarkRenderToolCall-24                	     200	      4436 ns/op	    1014 B/op	      14 allocs/op
+BenchmarkRenderLargeAutoDrop-24           	     200	    995996 ns/op	 1745309 B/op	   28871 allocs/op
+BenchmarkRenderLargeKeepAnalysis-24       	     200	   1859779 ns/op	 3528189 B/op	   58016 allocs/op
+BenchmarkParseToolCall-24                 	     200	      3464 ns/op	    2280 B/op	      55 allocs/op
+BenchmarkStreamParseToolCall-24           	     200	      2370 ns/op	    2280 B/op	      55 allocs/op
+BenchmarkParseLargeCompletion-24          	     200	     33674 ns/op	   46200 B/op	     851 allocs/op
+BenchmarkStreamParseLargeCompletion-24    	     200	     33465 ns/op	   46200 B/op	     851 allocs/op
+PASS
+ok  	github.com/euforicio/harmony-go/benchmarks/go	1.749s

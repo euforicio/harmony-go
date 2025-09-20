@@ -1,0 +1,12 @@
+full-ci:
+  - 'go.mod'
+  - 'go.sum'
+  - 'tokenizer/**'
+
+docs:
+  - '**/*.md'
+  - 'docs/**'
+
+ci:
+  - '.github/**'
+

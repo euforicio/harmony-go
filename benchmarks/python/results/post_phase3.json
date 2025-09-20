@@ -1,0 +1,18 @@
+[
+  {
+    "bench": "go_render",
+    "iters": 2000,
+    "nanos_per_op": 8379.25,
+    "ops_per_sec": 119342.42324790405,
+    "allocs_per_op": 65.0045,
+    "bytes_per_op": 3051.828
+  },
+  {
+    "bench": "go_parse",
+    "iters": 2000,
+    "nanos_per_op": 1978.604,
+    "ops_per_sec": 505406.84239999513,
+    "allocs_per_op": 62,
+    "bytes_per_op": 2096.008
+  }
+]
