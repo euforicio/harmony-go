@@ -40,6 +40,20 @@ func resolveCacheDir() (string, error) {
 	return primary, nil
 }
 
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
 func baseURL() string {
 	base := os.Getenv(envEncBase)
 	if base == "" {
@@ -99,14 +113,33 @@ func LoadO200k() (pairs [][2]interface{}, err error) {
 			if os.Getenv(envOffline) == "1" {
 				return nil, fmt.Errorf("o200k file missing and TIKTOKEN_OFFLINE=1; set %s to local dir containing o200k_base.tiktoken or unset offline", envEncBase)
 			}
+		} else if e != nil {
+			return nil, e
+		}
+
+		sum, e := fileSHA256(path)
+		if errors.Is(e, os.ErrNotExist) || !strings.EqualFold(sum, expectedO200k) {
+			if os.Getenv(envOffline) == "1" {
+				if e != nil && !errors.Is(e, os.ErrNotExist) {
+					return nil, e
+				}
+				if sum == "" {
+					return nil, fmt.Errorf("o200k file missing and TIKTOKEN_OFFLINE=1; set %s to local dir containing o200k_base.tiktoken or unset offline", envEncBase)
+				}
+				return nil, fmt.Errorf("cached o200k file hash mismatch: got %s want %s", sum, expectedO200k)
+			}
+
 			url := baseURL() + "o200k_base.tiktoken"
-			sum, e := downloadToFile(url, path)
+			sum, e = downloadToFile(url, path)
 			if e != nil {
 				return nil, e
 			}
-			if !strings.EqualFold(sum, expectedO200k) {
-				return nil, fmt.Errorf("hash mismatch: got %s want %s", sum, expectedO200k)
-			}
+		} else if e != nil {
+			return nil, e
+		}
+
+		if !strings.EqualFold(sum, expectedO200k) {
+			return nil, fmt.Errorf("hash mismatch: got %s want %s", sum, expectedO200k)
 		}
 	}
 
