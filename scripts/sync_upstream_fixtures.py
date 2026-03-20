@@ -16,6 +16,24 @@ OUT_DIR = ROOT / "testdata" / "upstream-head"
 
 def ensure_upstream_repo() -> Path:
     if DEFAULT_UPSTREAM_DIR.exists():
+        subprocess.run(
+            ["git", "-C", str(DEFAULT_UPSTREAM_DIR), "fetch", "--depth", "1", "origin", "HEAD"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["git", "-C", str(DEFAULT_UPSTREAM_DIR), "checkout", "--detach", "FETCH_HEAD"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["git", "-C", str(DEFAULT_UPSTREAM_DIR), "reset", "--hard", "FETCH_HEAD"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return DEFAULT_UPSTREAM_DIR
     subprocess.run(
         ["git", "clone", "--depth", "1", UPSTREAM_REPO, str(DEFAULT_UPSTREAM_DIR)],

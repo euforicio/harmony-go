@@ -124,6 +124,12 @@ echo '[200014]' | harmony-go decode
 
 Harmony Go is engineered for low allocations and high throughput. In local runs, it consistently outperforms the official Python bindings for render/parse‑heavy workloads. Streaming parse matches batch throughput while shaving a few allocations.
 
+Official implementations used for comparison
+
+- Python: the official `openai-harmony` Python bindings.
+- Rust: the official `openai/harmony` implementation and crate.
+- Upstream fixture/source-of-truth snapshot mirrored in this repo: `testdata/upstream-head/metadata.json`.
+
 Benchmarks below are from the cross‑parity harness in `benchmarks/python/bench.py`, Go benchmarks in `benchmarks/go`, and a Rust micro‑bench harness in `benchmarks/rust` at 200 iterations. Full details: `docs/python_go_performance.md`.
 
 Rendering

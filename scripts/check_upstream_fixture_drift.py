@@ -34,6 +34,12 @@ def main() -> int:
             raise SystemExit(f"missing upstream test-data dir: {upstream}")
 
         diff = filecmp.dircmp(LOCAL, upstream, ignore=["metadata.json"])
+        _, diff_files, funny = filecmp.cmpfiles(
+            LOCAL,
+            upstream,
+            diff.common_files,
+            shallow=False,
+        )
         changed = False
         if diff.left_only:
             changed = True
@@ -45,10 +51,15 @@ def main() -> int:
             print("upstream-only files:")
             for name in diff.right_only:
                 print(f"  {name}")
-        if diff.diff_files:
+        if diff_files:
             changed = True
             print("content diffs:")
-            for name in diff.diff_files:
+            for name in diff_files:
+                print(f"  {name}")
+        if funny:
+            changed = True
+            print("comparison errors:")
+            for name in funny:
                 print(f"  {name}")
 
         print(f"upstream HEAD: {git_output(repo, 'rev-parse', 'HEAD')}")

@@ -267,6 +267,67 @@ func TestStreamParserWithOptionsInvalidUTF8Recovery(t *testing.T) {
 	}
 }
 
+func TestStreamParserNonStrictRoleHintDoesNotDuplicateTokens(t *testing.T) {
+	enc := mustEncoding(t)
+
+	tokens, err := enc.Encode("first<|end|>second<|end|>", &EncodeOptions{
+		AllowedSpecial: AllSpecialTokens(),
+	})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	role := RoleAssistant
+	parser, err := NewStreamParserWithOptions(enc, &role, ParseOptions{Strict: false})
+	if err != nil {
+		t.Fatalf("NewStreamParserWithOptions: %v", err)
+	}
+	for _, tok := range tokens {
+		if err := parser.Process(tok); err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+	}
+	if err := parser.ProcessEOS(); err != nil {
+		t.Fatalf("ProcessEOS: %v", err)
+	}
+
+	if got := parser.Tokens(); !slices.Equal(got, tokens) {
+		t.Fatalf("Tokens() duplicated or dropped tokens: got %v want %v", got, tokens)
+	}
+	msgs := parser.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "first" || msgs[1].Content[0].Text != "second" {
+		t.Fatalf("unexpected recovered messages: %+v", msgs)
+	}
+}
+
+func TestStreamParserStrictRejectsStopTokenInHeader(t *testing.T) {
+	enc := mustEncoding(t)
+
+	tokens, err := enc.Encode("<|start|>assistant<|end|>", &EncodeOptions{
+		AllowedSpecial: AllSpecialTokens(),
+	})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	parser, err := NewStreamParserWithOptions(enc, nil, ParseOptions{Strict: true})
+	if err != nil {
+		t.Fatalf("NewStreamParserWithOptions: %v", err)
+	}
+	for _, tok := range tokens {
+		err = parser.Process(tok)
+		if err != nil {
+			break
+		}
+	}
+	if err == nil || !strings.Contains(err.Error(), "unexpected stop token in message header") {
+		t.Fatalf("expected strict header stop error, got %v", err)
+	}
+}
+
 func TestCLIParseRoleIsOptional(t *testing.T) {
 	enc := mustEncoding(t)
 

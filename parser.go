@@ -88,14 +88,20 @@ func (p *StreamParser) Process(token uint32) error {
 			p.undecodedBytes = p.undecodedBytes[:0]
 			p.messages = append(p.messages, Message{Author: Author{Role: *p.nextRole}})
 			p.state = stContent
-			return p.Process(token)
+			if _, stop := p.enc.stopAll[token]; stop {
+				if err := p.finalizeMessage(); err != nil {
+					return err
+				}
+				p.state = stExpectStart
+				return nil
+			}
+			return p.consumeContentToken(token)
 		}
 		return errors.New("unexpected token while expecting <|start|>")
 	case stHeader:
 		if _, stop := p.enc.stopAll[token]; stop {
 			if p.options.Strict {
-				p.headerToks = append(p.headerToks, token)
-				return nil
+				return errors.New("unexpected stop token in message header")
 			}
 			p.messages = append(p.messages, Message{
 				Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
@@ -178,6 +184,17 @@ func (p *StreamParser) finalizeMessage() error {
 func (p *StreamParser) ProcessEOS() error {
 	if p.state == stContent {
 		return p.finalizeMessage()
+	}
+	if p.state == stHeader && len(p.headerToks) > 0 {
+		if p.options.Strict {
+			return errors.New("unexpected end of stream in message header")
+		}
+		p.messages = append(p.messages, Message{
+			Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
+			Content: []Content{{Type: ContentText, Text: mustDecodeLossy(p.enc, p.headerToks)}},
+		})
+		p.headerToks = p.headerToks[:0]
+		p.state = stExpectStart
 	}
 	return nil
 }
@@ -339,42 +356,39 @@ func (p *StreamParser) consumeContentToken(token uint32) error {
 
 	p.undecodedBytes = append(p.undecodedBytes, p.scratch...)
 	p.lastDeltaBytes = p.lastDeltaBytes[:0]
-	for len(p.undecodedBytes) > 0 {
-		validPrefix := validUTF8PrefixLen(p.undecodedBytes)
-		if validPrefix > 0 {
-			chunk := p.undecodedBytes[:validPrefix]
-			p.contentBytes = append(p.contentBytes, chunk...)
-			p.lastDeltaBytes = append(p.lastDeltaBytes, chunk...)
-			p.undecodedBytes = p.undecodedBytes[validPrefix:]
-			continue
-		}
-		if !utf8.FullRune(p.undecodedBytes) {
+	src := p.undecodedBytes
+	i := 0
+	for i < len(src) {
+		if !utf8.FullRune(src[i:]) {
 			break
 		}
-		p.lastDeltaBytes = utf8.AppendRune(p.lastDeltaBytes, utf8.RuneError)
-		p.contentBytes = utf8.AppendRune(p.contentBytes, utf8.RuneError)
-		size := invalidPrefixLen(p.undecodedBytes)
-		p.undecodedBytes = p.undecodedBytes[size:]
+		r, size := utf8.DecodeRune(src[i:])
+		if r == utf8.RuneError && size == 1 {
+			i++
+			for i < len(src) {
+				if !utf8.FullRune(src[i:]) {
+					break
+				}
+				r2, size2 := utf8.DecodeRune(src[i:])
+				if r2 != utf8.RuneError || size2 != 1 {
+					break
+				}
+				i++
+			}
+
+			p.lastDeltaBytes = utf8.AppendRune(p.lastDeltaBytes, utf8.RuneError)
+			p.contentBytes = utf8.AppendRune(p.contentBytes, utf8.RuneError)
+			continue
+		}
+		chunk := src[i : i+size]
+		p.lastDeltaBytes = append(p.lastDeltaBytes, chunk...)
+		p.contentBytes = append(p.contentBytes, chunk...)
+		i += size
+	}
+	if i > 0 {
+		p.undecodedBytes = append(p.undecodedBytes[:0], src[i:]...)
 	}
 	return nil
-}
-
-func validUTF8PrefixLen(bs []byte) int {
-	for i := len(bs); i > 0; i-- {
-		if utf8.Valid(bs[:i]) {
-			return i
-		}
-	}
-	return 0
-}
-
-func invalidPrefixLen(bs []byte) int {
-	for i := 1; i < len(bs); i++ {
-		if validUTF8PrefixLen(bs[i:]) > 0 {
-			return i
-		}
-	}
-	return len(bs)
 }
 
 func derefRole(role *Role, fallback Role) Role {
