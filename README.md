@@ -47,8 +47,10 @@ It mirrors the reference semantics of the upstream implementation while offering
 
 ## Features
 - Render: `Render`, `RenderConversation`, `RenderConversationForCompletion`, `RenderConversationForTraining`.
-- Parse: `ParseMessagesFromCompletionTokens` for batch; `NewStreamParser` for incremental streaming.
-- Token helpers: `StopTokens`, `StopTokensForAssistantActions`, `DecodeUTF8`/`DecodeBytes`.
+- Parse: `ParseMessagesFromCompletionTokens`/`ParseMessagesFromCompletionTokensWithOptions` for batch; `NewStreamParser`/`NewStreamParserWithOptions` for incremental streaming.
+- Token helpers: `StopTokens`, `StopTokensForAssistantActions`, `DecodeUTF8`/`DecodeBytes`, `Decode`, `IsSpecialToken`, `AllSpecialTokens`.
+- Encode controls: `Encode` with `EncodeOptions` for upstream-compatible allowed/disallowed special token handling.
+- Built-in namespaces: `BrowserToolNamespace` and `PythonToolNamespace`.
 - Tools & channels: correct formatting tokens, `channel`, `recipient`, and `content_type` handling.
 - No external deps: ships with O200k tokenizer integration and Harmony specials.
 
@@ -110,7 +112,8 @@ echo '{"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}'
 echo '{"messages":[{"role":"assistant","channel":"final","content":[{"type":"text","text":"ok"}]}]}' | \
   harmony-go render-training
 
-# Parse tokens back to messages
+# Parse tokens back to messages (role hint is optional)
+echo '[1,2,3,4]' | harmony-go parse
 echo '[1,2,3,4]' | harmony-go parse -role assistant
 
 # Decode raw tokens into text (debugging)
@@ -120,6 +123,12 @@ echo '[200014]' | harmony-go decode
 ## Performance (Benchmarks & Repro)
 
 Harmony Go is engineered for low allocations and high throughput. In local runs, it consistently outperforms the official Python bindings for render/parse‑heavy workloads. Streaming parse matches batch throughput while shaving a few allocations.
+
+Official implementations used for comparison
+
+- Python: the official `openai-harmony` Python bindings.
+- Rust: the official `openai/harmony` implementation and crate.
+- Upstream fixture/source-of-truth snapshot mirrored in this repo: `testdata/upstream-head/metadata.json`.
 
 Benchmarks below are from the cross‑parity harness in `benchmarks/python/bench.py`, Go benchmarks in `benchmarks/go`, and a Rust micro‑bench harness in `benchmarks/rust` at 200 iterations. Full details: `docs/python_go_performance.md`.
 
@@ -143,6 +152,27 @@ Parsing
 | Large completion stream parse | 2,073 | 23,015 | 1,271 | 36,824 |
 
 Observed speedups range from ~6.6× (large render) up to ≥190× (tool‑call parse).
+
+Current Go benchmark snapshot
+
+- Machine: Apple M2 Ultra, macOS, 200 iterations
+- Command: `TIKTOKEN_OFFLINE=1 go test -run '^$' -bench '^Benchmark' -benchmem -benchtime=200x ./benchmarks/go`
+- Date: March 20, 2026
+
+| Benchmark | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Render tool-call | 3,552 | 942 | 11 |
+| Render large (auto-drop) | 310,770 | 466,192 | 4,850 |
+| Render large (keep analysis) | 475,765 | 939,856 | 9,681 |
+| Parse tool-call | 2,056 | 2,040 | 52 |
+| Stream parse tool-call | 1,842 | 2,040 | 52 |
+| Parse large completion | 17,073 | 26,184 | 465 |
+| Stream parse large completion | 20,120 | 26,184 | 465 |
+
+Parse benchmark drift guard
+
+- Compare the current parse subset against the checked-in baseline with `python3 scripts/compare_parse_bench.py`.
+- Verify mirrored upstream Harmony fixtures still match live upstream `HEAD` with `python3 scripts/check_upstream_fixture_drift.py`.
 
 Rust vs Go (micro‑benches)
 
@@ -187,6 +217,8 @@ Build with `GOEXPERIMENT=arenas` to place decoder storage in an arena. This prim
 ## Testing & Parity
 - Unit tests: `go test ./...`
 - Benchmarks: `go test -run '^$' -bench '^Benchmark' -benchmem ./benchmarks/go`
+- Parse benchmark comparison: `python3 scripts/compare_parse_bench.py`
+- Live upstream fixture drift: `python3 scripts/check_upstream_fixture_drift.py`
 - Lint: `golangci-lint run ./...`
 - Coverage: `go test ./... -cover -coverprofile=coverage.out && go tool cover -func=coverage.out`
 - Python parity tests (optional): ensure `openai_harmony` is installed, then run pytest in `tests/` to validate CLI parity.
@@ -196,6 +228,7 @@ What we check in parity tests:
 - Conversation rendering (system/developer/tools/channels) vs Python.
 - Training substitution (<|end|> → <|return|> for assistant:final).
 - Parser and stream parser produce the same message shapes as Python.
+- Mirrored official upstream fixtures stay pinned and checked for live `HEAD` drift.
 
 ## Configuration
 - `TIKTOKEN_ENCODINGS_BASE` — directory containing `o200k_base.tiktoken` (overrides remote).

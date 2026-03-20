@@ -67,6 +67,10 @@ func (o *o200kSegmenter) Next(s string, i int) int {
 	return i + 1
 }
 
+func isLetterPrefixRune(r rune) bool {
+	return r != '\r' && r != '\n' && !isL(r) && !isN(r)
+}
+
 // Helpers
 func utf8DecodeRuneInString(s string) (r rune, size int) { return utf8.DecodeRuneInString(s) }
 
@@ -82,7 +86,7 @@ func ruleLettersWithPrefixAndContraction(s string, i int) int {
 	if r >= 0x80 {
 		r, sz = utf8DecodeRuneInString(s[j:])
 	}
-	if !(!isSpace(r) && !isL(r) && !isN(r)) {
+	if !isLetterPrefixRune(r) {
 		return ruleLettersWithContraction(s, i)
 	}
 	j += sz

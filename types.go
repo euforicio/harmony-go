@@ -118,6 +118,17 @@ type RenderConversationConfig struct {
 	AutoDropAnalysis bool `json:"auto_drop_analysis"`
 }
 
+// ParseOptions controls parser strictness for malformed model output recovery.
+type ParseOptions struct {
+	Strict bool `json:"strict"`
+}
+
+// EncodeOptions controls special-token handling during text encoding.
+type EncodeOptions struct {
+	AllowedSpecial    map[string]struct{}
+	DisallowedSpecial map[string]struct{}
+}
+
 // MarshalJSON implements the JSON shape used by the Harmony format, where
 // content may be a string or a list of structured items.
 func (m *Message) MarshalJSON() ([]byte, error) {

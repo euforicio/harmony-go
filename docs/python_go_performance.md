@@ -23,6 +23,7 @@ This document compares the behaviour of the Python bindings (`openai_harmony`) w
   - **Large completion parse**: decoding a long assistant completion containing analysis and final channels.
   - **Streamable parser variants**: replaying tokens through `StreamableParser` to measure incremental consumption.
 - Go benchmarks additionally record allocations (`-benchmem`).
+- Parse regressions are checked locally with `python3 scripts/compare_parse_bench.py`, which compares the current parse subset against `benchmarks/python/results/go_bench.txt`.
 
 Commands executed:
 
@@ -66,4 +67,4 @@ go test -run '^$' -bench '^Benchmark' -benchtime=200x -benchmem ./benchmarks/go
 
 - Prefer the Go implementation for latency-critical services or when integrating into Go-based infrastructure.
 - Use the Python bindings when embedding Harmony into existing Python tooling or notebooks; keep render counts low (e.g. cache encoded prompts) to amortise the overhead.
-- For further analysis, consider expanding Go benchmarks with stream parsing cases and instrument Python runs via `py-spy` to isolate hotspots.
+- For current repo work, run `go test ./...`, `python3 scripts/check_upstream_fixture_drift.py`, and `python3 scripts/compare_parse_bench.py` before merging parsing changes.

@@ -30,6 +30,7 @@ trace.out
 .gomodcache/
 .gopath/
 .gotmp/
+.worktrees/
 .tiktoken-cache/
 tmp/
 

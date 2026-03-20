@@ -29,6 +29,8 @@ Pushes to `main`:
 Benchmarks:
 
 - Benchmarks are manual via the workflow_dispatch event. They build test binaries and run a subset of representative benchmarks; results are uploaded as artifacts.
+- For local parse regression checks, run `python3 scripts/compare_parse_bench.py` against `benchmarks/python/results/go_bench.txt`.
+- For live upstream parity drift, run `python3 scripts/check_upstream_fixture_drift.py`.
 
 Notes:
 

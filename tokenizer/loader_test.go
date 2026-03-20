@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,5 +34,26 @@ func TestLoaderDownloadTimeout(t *testing.T) {
 		if elapsed := time.Since(start); elapsed > 5*time.Second {
 			t.Fatalf("download exceeded expected timeout: %v", elapsed)
 		}
+	}
+}
+
+func TestLoaderOfflineCorruptCacheFailsHashCheck(t *testing.T) {
+	t.Setenv(envOffline, "1")
+	t.Setenv(envEncBase, "")
+
+	cacheDir := t.TempDir()
+	t.Setenv(envCacheDir, cacheDir)
+
+	path := filepath.Join(cacheDir, "o200k_base.tiktoken")
+	if err := os.WriteFile(path, []byte("not a valid vocab\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err := LoadO200k()
+	if err == nil {
+		t.Fatalf("expected hash mismatch for corrupt cached vocab")
+	}
+	if !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

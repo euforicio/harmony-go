@@ -94,7 +94,7 @@ func main() {
 		_ = json.NewEncoder(os.Stdout).Encode(tok)
 	case "parse":
 		fs := flag.NewFlagSet("parse", flag.ExitOnError)
-		role := fs.String("role", "assistant", "optional starting role (user|assistant|system|developer|tool)")
+		role := fs.String("role", "", "optional starting role (user|assistant|system|developer|tool)")
 		_ = fs.Parse(os.Args[2:])
 		enc, err := harmony.LoadEncoding(harmony.HarmonyGptOss)
 		if err != nil {

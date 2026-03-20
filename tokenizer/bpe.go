@@ -3,6 +3,7 @@ package tokenizer
 import (
 	"errors"
 	"sync"
+	"unicode/utf8"
 )
 
 // Rank represents the priority/rank of a token pair in BPE encoding.
@@ -59,24 +60,34 @@ func (b *coreBPE) DecodeUTF8(tokens []uint32) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if !utf8.Valid(bs) {
+		return "", errors.New("invalid utf-8")
+	}
 	return string(bs), nil
+}
+
+// DecodeTokenBytesInto appends the decoded bytes for a single token into dst.
+func (b *coreBPE) DecodeTokenBytesInto(dst *[]byte, token uint32) error {
+	buf := *dst
+	if b.dec.AppendInto(&buf, token) {
+		*dst = buf
+		return nil
+	}
+	if v, ok := b.specialDec[token]; ok {
+		*dst = append(buf, v...)
+		return nil
+	}
+	return errors.New("invalid token for decoding")
 }
 
 // DecodeBytesInto appends the decoded bytes for the provided tokens
 // into dst, avoiding intermediate slice allocations.
 func (b *coreBPE) DecodeBytesInto(dst *[]byte, tokens []uint32) error {
-	buf := *dst
 	for _, t := range tokens {
-		if b.dec.AppendInto(&buf, t) {
-			continue
+		if err := b.DecodeTokenBytesInto(dst, t); err != nil {
+			return err
 		}
-		if v, ok := b.specialDec[t]; ok {
-			buf = append(buf, v...)
-			continue
-		}
-		return errors.New("invalid token for decoding")
 	}
-	*dst = buf
 	return nil
 }
 
