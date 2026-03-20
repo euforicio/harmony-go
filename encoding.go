@@ -120,6 +120,20 @@ func (e *Encoding) DecodeBytes(tokens []uint32) ([]byte, error) {
 	return e.bpe.DecodeBytes(tokens)
 }
 
+// Decode decodes tokens into text, replacing invalid UTF-8 with the Unicode replacement character.
+func (e *Encoding) Decode(tokens []uint32) string {
+	bs, err := e.bpe.DecodeBytes(tokens)
+	if err != nil {
+		return ""
+	}
+	return string(bytes.Runes(bs))
+}
+
+// IsSpecialToken reports whether a token is a Harmony special token.
+func (e *Encoding) IsSpecialToken(token uint32) bool {
+	return e.bpe.IsSpecialToken(token)
+}
+
 // Render/Parse API stubs — implemented in subsequent steps.
 
 type renderOptions struct {
@@ -378,7 +392,13 @@ func (e *Encoding) RenderConversationForTraining(conv Conversation, cfg *RenderC
 // ParseMessagesFromCompletionTokens parses completion tokens back into
 // messages. If role is provided, it serves as a role hint for the first header.
 func (e *Encoding) ParseMessagesFromCompletionTokens(tokens []uint32, role *Role) ([]Message, error) {
-	p, err := NewStreamParser(e, role)
+	return e.ParseMessagesFromCompletionTokensWithOptions(tokens, role, ParseOptions{Strict: true})
+}
+
+// ParseMessagesFromCompletionTokensWithOptions parses completion tokens back into
+// messages using parser options. If role is provided, it serves as a role hint for the first header.
+func (e *Encoding) ParseMessagesFromCompletionTokensWithOptions(tokens []uint32, role *Role, opts ParseOptions) ([]Message, error) {
+	p, err := NewStreamParserWithOptions(e, role, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +412,63 @@ func (e *Encoding) ParseMessagesFromCompletionTokens(tokens []uint32, role *Role
 	}
 	// Return messages slice directly to avoid a copy; parser is no longer used.
 	return p.messages, nil
+}
+
+// AllSpecialTokens returns the set of all Harmony special token strings.
+func AllSpecialTokens() map[string]struct{} {
+	all := tokenizer.HarmonySpecials()
+	out := make(map[string]struct{}, len(all))
+	for lit := range all {
+		out[lit] = struct{}{}
+	}
+	return out
+}
+
+func cloneSpecialSet(in map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{}, len(in))
+	for k := range in {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+func earliestDisallowedSpecial(text string, disallowed map[string]struct{}) string {
+	pos := len(text) + 1
+	match := ""
+	for lit := range disallowed {
+		idx := strings.Index(text, lit)
+		if idx >= 0 && idx < pos {
+			pos = idx
+			match = lit
+		}
+	}
+	return match
+}
+
+// Encode encodes text into tokens with upstream-compatible special token controls.
+func (e *Encoding) Encode(text string, opts *EncodeOptions) ([]uint32, error) {
+	allowed := map[string]struct{}{}
+	disallowed := map[string]struct{}{}
+	if opts != nil {
+		if opts.AllowedSpecial != nil {
+			allowed = cloneSpecialSet(opts.AllowedSpecial)
+		}
+		if opts.DisallowedSpecial != nil {
+			disallowed = cloneSpecialSet(opts.DisallowedSpecial)
+		} else {
+			disallowed = AllSpecialTokens()
+			for lit := range allowed {
+				delete(disallowed, lit)
+			}
+		}
+	} else {
+		disallowed = AllSpecialTokens()
+	}
+	if tok := earliestDisallowedSpecial(text, disallowed); tok != "" {
+		return nil, fmt.Errorf("encountered text corresponding to disallowed special token %q", tok)
+	}
+	toks, _ := e.bpe.Encode(text, allowed)
+	return toks, nil
 }
 
 // internal helpers (to be used by render/parse)

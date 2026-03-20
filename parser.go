@@ -1,8 +1,11 @@
 package harmony
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/euforicio/harmony-go/tokenizer"
 )
@@ -25,29 +28,48 @@ type parsedHeader struct {
 // StreamParser incrementally parses Harmony tokens into messages. It mirrors
 // the behavior of the upstream StreamableParser and is useful for streaming.
 type StreamParser struct {
-	enc         *Encoding
-	nextRole    *Role
-	state       streamState
-	tokens      []uint32
-	messages    []Message
-	headerToks  []uint32
-	contentToks []uint32
+	enc          *Encoding
+	nextRole     *Role
+	options      ParseOptions
+	state        streamState
+	tokens       []uint32
+	messages     []Message
+	headerToks   []uint32
+	contentBytes []byte
 	// last delta stored as bytes to avoid per-token string allocs
 	lastDeltaBytes []byte
 	// scratch buffer reused for per-token decoding to reduce allocations
-	scratch []byte
+	scratch        []byte
+	undecodedBytes []byte
 }
 
 // NewStreamParser creates a streaming parser. If role is provided, it is used
 // as a hint for the upcoming header and the parser starts in Header state.
 func NewStreamParser(enc *Encoding, role *Role) (*StreamParser, error) {
+	return NewStreamParserWithOptions(enc, role, ParseOptions{Strict: true})
+}
+
+// NewStreamParserWithOptions creates a streaming parser with explicit parse options.
+func NewStreamParserWithOptions(enc *Encoding, role *Role, opts ParseOptions) (*StreamParser, error) {
 	st := stExpectStart
 	if role != nil {
 		// Match upstream behaviour: if a next role is hinted, begin collecting header tokens
 		// immediately until we see <|message|>.
 		st = stHeader
 	}
-	return &StreamParser{enc: enc, nextRole: role, state: st}, nil
+	return &StreamParser{
+		enc:            enc,
+		nextRole:       role,
+		options:        opts,
+		state:          st,
+		tokens:         make([]uint32, 0, 16),
+		messages:       make([]Message, 0, 2),
+		headerToks:     make([]uint32, 0, 8),
+		contentBytes:   make([]byte, 0, 64),
+		lastDeltaBytes: make([]byte, 0, 32),
+		scratch:        make([]byte, 0, 16),
+		undecodedBytes: make([]byte, 0, 8),
+	}, nil
 }
 
 // Process consumes a single token and updates the parser state.
@@ -60,24 +82,59 @@ func (p *StreamParser) Process(token uint32) error {
 			p.state = stHeader
 			return nil
 		}
+		if !p.options.Strict && p.nextRole != nil {
+			p.headerToks = p.headerToks[:0]
+			p.contentBytes = p.contentBytes[:0]
+			p.undecodedBytes = p.undecodedBytes[:0]
+			p.messages = append(p.messages, Message{Author: Author{Role: *p.nextRole}})
+			p.state = stContent
+			return p.Process(token)
+		}
 		return errors.New("unexpected token while expecting <|start|>")
 	case stHeader:
+		if _, stop := p.enc.stopAll[token]; stop {
+			if p.options.Strict {
+				p.headerToks = append(p.headerToks, token)
+				return nil
+			}
+			p.messages = append(p.messages, Message{
+				Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
+				Content: []Content{{Type: ContentText, Text: mustDecodeLossy(p.enc, p.headerToks)}},
+			})
+			p.headerToks = p.headerToks[:0]
+			p.state = stExpectStart
+			return nil
+		}
 		if token == tokenizer.TokStart {
 			// Ignore stray start tokens when beginning in Header due to role hint
+			if len(p.headerToks) > 0 {
+				if p.options.Strict {
+					return errors.New("unexpected tokens remaining in message header")
+				}
+				p.messages = append(p.messages, Message{
+					Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
+					Content: []Content{{Type: ContentText, Text: mustDecodeLossy(p.enc, p.headerToks)}},
+				})
+				p.headerToks = p.headerToks[:0]
+			}
 			return nil
 		}
 		if token == tokenizer.TokMessage {
 			// parse header tokens
-			hdr, err := p.parseHeaderFromTokens(p.headerToks)
+			hdr, remaining, err := p.parseHeaderFromTokens(p.headerToks)
 			if err != nil {
 				return err
 			}
 			// set state
 			p.nextRole = nil
-			p.contentToks = p.contentToks[:0]
+			p.contentBytes = p.contentBytes[:0]
+			p.undecodedBytes = p.undecodedBytes[:0]
 			// store header in next message via zero-width marker: we carry as separate field? we'll stash in struct
 			// Encapsulate header in a new message placeholder using content later
 			p.messages = append(p.messages, Message{Author: hdr.author, Recipient: hdr.recipient, Channel: hdr.channel, ContentType: hdr.contentType})
+			if remaining != "" {
+				p.renderRecoveredText(remaining)
+			}
 			p.state = stContent
 			return nil
 		}
@@ -93,16 +150,7 @@ func (p *StreamParser) Process(token uint32) error {
 			return nil
 		}
 		// Append token to logical content
-		p.contentToks = append(p.contentToks, token)
-		// Decode only this token into scratch and set delta to the decoded bytes
-		p.scratch = p.scratch[:0]
-		one := [...]uint32{token}
-		if err := p.enc.bpe.DecodeBytesInto(&p.scratch, one[:]); err != nil {
-			return err
-		}
-		// Save bytes; conversion to string is deferred to LastContentDelta.
-		p.lastDeltaBytes = append(p.lastDeltaBytes[:0], p.scratch...)
-		return nil
+		return p.consumeContentToken(token)
 	default:
 		return errors.New("invalid parser state")
 	}
@@ -113,14 +161,16 @@ func (p *StreamParser) finalizeMessage() error {
 		return nil
 	}
 	idx := len(p.messages) - 1
-	text, err := p.enc.bpe.DecodeUTF8(p.contentToks)
-	if err != nil {
-		return err
+	text := string(p.contentBytes)
+	if len(p.undecodedBytes) > 0 {
+		text += string(bytes.Runes(p.undecodedBytes))
 	}
 	p.messages[idx].Content = []Content{{Type: ContentText, Text: text}}
 	// reset buffers
 	p.headerToks = p.headerToks[:0]
-	p.contentToks = p.contentToks[:0]
+	p.contentBytes = p.contentBytes[:0]
+	p.undecodedBytes = p.undecodedBytes[:0]
+	p.lastDeltaBytes = p.lastDeltaBytes[:0]
 	return nil
 }
 
@@ -171,11 +221,13 @@ func (p *StreamParser) CurrentContent() string {
 	if p.state != stContent {
 		return ""
 	}
-	s, err := p.enc.bpe.DecodeUTF8(p.contentToks)
-	if err != nil {
-		return ""
+	if len(p.undecodedBytes) == 0 {
+		return string(p.contentBytes)
 	}
-	return s
+	buf := make([]byte, 0, len(p.contentBytes)+len(p.undecodedBytes))
+	buf = append(buf, p.contentBytes...)
+	buf = append(buf, []byte(string(bytes.Runes(p.undecodedBytes)))...)
+	return string(buf)
 }
 
 // CurrentContentType returns the content-type marker (e.g., "<|constrain|>json")
@@ -207,12 +259,12 @@ func (p *StreamParser) CurrentRecipient() string {
 // Process call, if any.
 func (p *StreamParser) LastContentDelta() string { return string(p.lastDeltaBytes) }
 
-func (p *StreamParser) parseHeaderFromTokens(header []uint32) (parsedHeader, error) {
+func (p *StreamParser) parseHeaderFromTokens(header []uint32) (parsedHeader, string, error) {
 	var hdr parsedHeader
 	// decode utf8
 	s, err := p.enc.bpe.DecodeUTF8(header)
 	if err != nil {
-		return hdr, err
+		return hdr, "", err
 	}
 	s = normalizeHeader(s)
 	roleToken, remainder := splitLeadingToken(s)
@@ -235,5 +287,107 @@ func (p *StreamParser) parseHeaderFromTokens(header []uint32) (parsedHeader, err
 	if ct := scrubContentType(roleToken, remainder); ct != "" {
 		hdr.contentType = ct
 	}
-	return hdr, nil
+	remaining := headerRemainder(roleToken, remainder, hdr)
+	if remaining != "" && p.options.Strict {
+		return hdr, "", errors.New("unexpected tokens remaining in message header")
+	}
+	return hdr, remaining, nil
+}
+
+func headerRemainder(roleToken, remainder string, hdr parsedHeader) string {
+	s := strings.TrimSpace(remainder)
+	if s == "" {
+		return ""
+	}
+	if hdr.channel != "" {
+		s = strings.ReplaceAll(s, "<|channel|>"+hdr.channel, "")
+		s = strings.ReplaceAll(s, " <|channel|>"+hdr.channel, "")
+	}
+	if hdr.recipient != "" {
+		s = strings.ReplaceAll(s, "to="+hdr.recipient, "")
+		s = strings.ReplaceAll(s, " to="+hdr.recipient, "")
+		if hdr.author.Role == RoleTool && roleToken == hdr.recipient {
+			s = strings.TrimSpace(s)
+		}
+	}
+	if hdr.contentType != "" {
+		s = strings.ReplaceAll(s, hdr.contentType, "")
+		s = strings.ReplaceAll(s, " "+hdr.contentType, "")
+	}
+	s = strings.TrimSpace(s)
+	return s
+}
+
+func (p *StreamParser) renderRecoveredText(text string) {
+	if text == "" {
+		return
+	}
+	p.contentBytes = append(p.contentBytes, text...)
+	p.lastDeltaBytes = append(p.lastDeltaBytes[:0], text...)
+}
+
+func (p *StreamParser) consumeContentToken(token uint32) error {
+	p.scratch = p.scratch[:0]
+	if err := p.enc.bpe.DecodeTokenBytesInto(&p.scratch, token); err != nil {
+		return err
+	}
+	if len(p.undecodedBytes) == 0 && utf8.Valid(p.scratch) {
+		p.contentBytes = append(p.contentBytes, p.scratch...)
+		p.lastDeltaBytes = append(p.lastDeltaBytes[:0], p.scratch...)
+		return nil
+	}
+
+	p.undecodedBytes = append(p.undecodedBytes, p.scratch...)
+	p.lastDeltaBytes = p.lastDeltaBytes[:0]
+	for len(p.undecodedBytes) > 0 {
+		validPrefix := validUTF8PrefixLen(p.undecodedBytes)
+		if validPrefix > 0 {
+			chunk := p.undecodedBytes[:validPrefix]
+			p.contentBytes = append(p.contentBytes, chunk...)
+			p.lastDeltaBytes = append(p.lastDeltaBytes, chunk...)
+			p.undecodedBytes = p.undecodedBytes[validPrefix:]
+			continue
+		}
+		if !utf8.FullRune(p.undecodedBytes) {
+			break
+		}
+		p.lastDeltaBytes = utf8.AppendRune(p.lastDeltaBytes, utf8.RuneError)
+		p.contentBytes = utf8.AppendRune(p.contentBytes, utf8.RuneError)
+		size := invalidPrefixLen(p.undecodedBytes)
+		p.undecodedBytes = p.undecodedBytes[size:]
+	}
+	return nil
+}
+
+func validUTF8PrefixLen(bs []byte) int {
+	for i := len(bs); i > 0; i-- {
+		if utf8.Valid(bs[:i]) {
+			return i
+		}
+	}
+	return 0
+}
+
+func invalidPrefixLen(bs []byte) int {
+	for i := 1; i < len(bs); i++ {
+		if validUTF8PrefixLen(bs[i:]) > 0 {
+			return i
+		}
+	}
+	return len(bs)
+}
+
+func derefRole(role *Role, fallback Role) Role {
+	if role == nil {
+		return fallback
+	}
+	return *role
+}
+
+func mustDecodeLossy(enc *Encoding, toks []uint32) string {
+	bs, err := enc.DecodeBytes(toks)
+	if err != nil {
+		return ""
+	}
+	return string(bytes.Runes(bs))
 }

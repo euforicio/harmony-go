@@ -24,6 +24,8 @@ Thanks for your interest in improving Harmony Go! This guide explains how to set
 ## Benchmarks (optional)
 To compare performance locally:
 - Go only: `go test -run '^$' -bench '^Benchmark' -benchmem ./benchmarks/go`
+- Parse baseline comparison: `python3 scripts/compare_parse_bench.py`
+- Live upstream fixture drift: `python3 scripts/check_upstream_fixture_drift.py`
 - See `docs/python_go_performance.md` for methodology and notes.
 
 ## Style & Conventions
@@ -34,6 +36,7 @@ To compare performance locally:
 ## Pull Requests
 - Describe the problem, the approach, and any trade‑offs.
 - Include before/after performance numbers when optimizing.
+- If parsing performance changes, include the output of `python3 scripts/compare_parse_bench.py`.
 - Link related issues and add screenshots for CLI UX changes if applicable.
 
 ### Requesting Full CI On PRs

@@ -21,6 +21,39 @@ env:
   GO_VERSION: '1.25.1'
 
 jobs:
+  parity:
+    name: Parity
+    runs-on: ubuntu-latest
+    env:
+      TIKTOKEN_GO_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+      GOCACHE: ${{ github.workspace }}/.gocache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Prepare directories
+        run: |
+          mkdir -p .tiktoken-cache .gocache
+      - name: Cache tokenizer data
+        uses: actions/cache@v4
+        with:
+          path: .tiktoken-cache
+          key: tiktoken-${{ hashFiles('go.mod', 'go.sum') }}
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: .gocache
+          key: ${{ runner.os }}-go${{ env.GO_VERSION }}-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go${{ env.GO_VERSION }}-build-
+      - name: Run mirrored parity suites
+        run: go test . ./benchmarks/go/golden
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -144,7 +177,7 @@ jobs:
   arenas:
     name: Arenas Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, parity]
     # Skip this extra build on PRs; run on push/main or manual
     if: github.event_name != 'pull_request'
     env:
@@ -183,7 +216,7 @@ jobs:
     name: Benchmarks (manual)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, parity]
     env:
       TIKTOKEN_GO_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
@@ -230,3 +263,14 @@ jobs:
             profiles/bench-heap.txt
             profiles/bench-arenas.txt
           if-no-files-found: error
+
+  upstream-drift:
+    name: Upstream Drift
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check live upstream fixture drift
+        run: python3 scripts/check_upstream_fixture_drift.py
