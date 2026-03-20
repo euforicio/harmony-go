@@ -270,7 +270,7 @@ func TestStreamParserWithOptionsInvalidUTF8Recovery(t *testing.T) {
 func TestStreamParserNonStrictRoleHintDoesNotDuplicateTokens(t *testing.T) {
 	enc := mustEncoding(t)
 
-	tokens, err := enc.Encode("first<|end|>second<|end|>", &EncodeOptions{
+	tokens, err := enc.Encode("second<|end|>", &EncodeOptions{
 		AllowedSpecial: AllSpecialTokens(),
 	})
 	if err != nil {
@@ -282,6 +282,7 @@ func TestStreamParserNonStrictRoleHintDoesNotDuplicateTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamParserWithOptions: %v", err)
 	}
+	parser.state = stExpectStart
 	for _, tok := range tokens {
 		if err := parser.Process(tok); err != nil {
 			t.Fatalf("Process: %v", err)
@@ -295,10 +296,10 @@ func TestStreamParserNonStrictRoleHintDoesNotDuplicateTokens(t *testing.T) {
 		t.Fatalf("Tokens() duplicated or dropped tokens: got %v want %v", got, tokens)
 	}
 	msgs := parser.Messages()
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Content[0].Text != "first" || msgs[1].Content[0].Text != "second" {
+	if msgs[0].Content[0].Text != "second" {
 		t.Fatalf("unexpected recovered messages: %+v", msgs)
 	}
 }
@@ -325,6 +326,42 @@ func TestStreamParserStrictRejectsStopTokenInHeader(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "unexpected stop token in message header") {
 		t.Fatalf("expected strict header stop error, got %v", err)
+	}
+}
+
+func TestStreamParserNonStrictRecoveryClearsRoleHint(t *testing.T) {
+	enc := mustEncoding(t)
+
+	tokens, err := enc.Encode("broken<|end|><|start|>functions.lookup_weather<|message|>{\"ok\":true}<|end|>", &EncodeOptions{
+		AllowedSpecial: AllSpecialTokens(),
+	})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	role := RoleAssistant
+	parser, err := NewStreamParserWithOptions(enc, &role, ParseOptions{Strict: false})
+	if err != nil {
+		t.Fatalf("NewStreamParserWithOptions: %v", err)
+	}
+	for _, tok := range tokens {
+		if err := parser.Process(tok); err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+	}
+	if err := parser.ProcessEOS(); err != nil {
+		t.Fatalf("ProcessEOS: %v", err)
+	}
+
+	msgs := parser.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].Author.Role != RoleAssistant {
+		t.Fatalf("unexpected recovered role: %+v", msgs[0].Author)
+	}
+	if msgs[1].Author.Role != RoleTool || msgs[1].Author.Name != "functions.lookup_weather" {
+		t.Fatalf("expected tool message after recovery, got %+v", msgs[1].Author)
 	}
 }
 

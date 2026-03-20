@@ -107,6 +107,7 @@ func (p *StreamParser) Process(token uint32) error {
 				Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
 				Content: []Content{{Type: ContentText, Text: mustDecodeLossy(p.enc, p.headerToks)}},
 			})
+			p.nextRole = nil
 			p.headerToks = p.headerToks[:0]
 			p.state = stExpectStart
 			return nil
@@ -121,6 +122,7 @@ func (p *StreamParser) Process(token uint32) error {
 					Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
 					Content: []Content{{Type: ContentText, Text: mustDecodeLossy(p.enc, p.headerToks)}},
 				})
+				p.nextRole = nil
 				p.headerToks = p.headerToks[:0]
 			}
 			return nil
@@ -193,6 +195,7 @@ func (p *StreamParser) ProcessEOS() error {
 			Author:  Author{Role: derefRole(p.nextRole, RoleAssistant)},
 			Content: []Content{{Type: ContentText, Text: mustDecodeLossy(p.enc, p.headerToks)}},
 		})
+		p.nextRole = nil
 		p.headerToks = p.headerToks[:0]
 		p.state = stExpectStart
 	}
