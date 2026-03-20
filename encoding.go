@@ -448,7 +448,7 @@ func earliestDisallowedSpecial(text string, disallowed map[string]struct{}) stri
 // Encode encodes text into tokens with upstream-compatible special token controls.
 func (e *Encoding) Encode(text string, opts *EncodeOptions) ([]uint32, error) {
 	allowed := map[string]struct{}{}
-	disallowed := map[string]struct{}{}
+	var disallowed map[string]struct{}
 	if opts != nil {
 		if opts.AllowedSpecial != nil {
 			allowed = cloneSpecialSet(opts.AllowedSpecial)
